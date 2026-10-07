@@ -9,7 +9,7 @@
 - GitHub 仓库已更名为 `sujingkpo/dsh-change-review-live`（remote 随之更新），**本地目录名仍是 `D:\work\github\dsh-change-review`**——桌面 profile 的 `link:` 依赖指向该路径，别改目录名。
 - 一个包承载两半，**无构建步骤**：
   - Host：`lib/index.js`（~2038 行 / 98 KB，`name = 'diff-review'`、`inject = ['webServer', 'agents']`、`export { apply }`）——记录改动 + 注册 HTTP 路由，也是 `package.json` 的 `main`。
-  - 浏览器：`lib/client.js`（~2725 行 / 143 KB，`window.__ModuleLoader__.load({ id: "dsh-change-review-live" })`）——React UI bundle，由 `exports["./client"]` / `dsh.client` 直接指向。
+  - 浏览器：`lib/client.js`（~2962 行 / 191 KB，`window.__ModuleLoader__.load({ id: "dsh-change-review-live" })`）——React UI bundle，由 `exports["./client"]` / `dsh.client` 直接指向；文案走 `LOCALE_EN` + `T()` 跟随 DSH 语言（见 ## Conventions 的 i18n 条）。
   - `cordis.patch.yml` 只做一件事：向 bundle `insert` `id: diff-review` / `name: dsh-change-review-live`。
 - `package.json` 还声明 `dsh.bundle.patch`、`dsh.client.platform = "web"`、`dsh.client.inject`（5 个官方客户端包）、`files: ["lib", "cordis.patch.yml"]`；版本 `0.2.1`；**未发 npm、零依赖**。
 - **更名范围（2026-09-14）**：对外标识全改（package name、patch、bundle id、侧栏 tab 类型 id）；**内部标识一律保留**——HTTP 路由 `/diff-review/*`、状态目录 `$DSH_HOME/diff-review/`、localStorage `dsh.diff-review.colors`、Host 插件名 `diff-review`、CSS 前缀 `drv-` / `dsdrv-`，已存记录与自定义颜色不受影响。
@@ -85,10 +85,13 @@
 
 - 文件头必须有 `@description`/`@author`/`@date`；**不再追加 `@modify`**（堆积的 @modify 段已从两个 lib 文件整体清空，2026-09-17 用户决定——最长时注释 330+ 行，收益为负；变更史看 git）。
 - 函数与复杂逻辑写中文注释；单行 `if` 也必须带大括号；不留空代码块。
-- 换行符：`lib/*.js` 是 **CRLF 且 0 个裸 LF**（`lib/index.js` 2037 个 CRLF、末行无换行；`lib/client.js` 2725 个）；`AGENTS.md` 是 **LF**。改文件别把换行符统一掉。**每次大段插入（尤其 new_string 来自 `tools.write` 写的临时文件时）都要重新数一遍**：实测插入 272 行 LF 文本会把**整个** `lib/client.js` 归一成 LF（`CRLF=0 LF=2626`），修法是 `s.replace(/\r?\n/g, '\r\n')` 写回。
+- 换行符：**仓库里存的是 LF**（2026-10-07 实测 `git show HEAD:lib/client.js` / `HEAD:lib/index.js` 都是 0 个 CRLF、末行无换行）；早期这条写的「CRLF 且 0 个裸 LF」只成立于开了 `core.autocrlf` 的 Windows 工作区。在 LF 工作区（Linux/WSL 克隆）改文件就保持 LF，**别整成 CRLF**（会把整个文件算成改动）；反之在 CRLF 工作区也别把行尾统一成 LF。`AGENTS.md` 是 **LF**。**每次大段插入（尤其 new_string 来自 `tools.write` 写的临时文件时）都要重新数一遍**：实测插入 272 行 LF 文本会把**整个** `lib/client.js` 归一成 LF（`CRLF=0 LF=2626`），修法是 `s.replace(/\r?\n/g, '\r\n')` 写回。
 - `lib/client.js` 是 bundle：内部用 **Tab 缩进**，`lib/index.js` 用 2 空格；编辑时保持原样。
+- **i18n（2026-10-07 加）**：界面文案跟随 DSH 语言（设置 → General → Language）。`lib/client.js` 的 `LOCALE_EN` 里**键就是中文原文**（gettext 风格），取值一律写成 `T("中文原文", { 参数 })`；`apply()` 用 `ctx.locale.register("diff-review", { zh, en })` 注册（`zh` 由 `Object.keys(LOCALE_EN)` 生成恒等映射），槽位声明加 `locale: "diff-review"`，`settings.section` 的 `label` 用函数形式（`() => T("实时审查")`）以便切换语言后重算。英文缺项、或 DSH 没有 locale 服务（旧版）时 `T()` 回落中文原文——**不会露出 key，但也不会变英文**，所以改动/新增文案必须同步 `LOCALE_EN` 的**键**：键与原文不完全一致（含空格、标点、`{参数}` 名）就等于没翻译。Host（`lib/index.js`）不掌握浏览器语言，因此它按中文原文/模板回传，由客户端 `T()` 翻译；带变量的用 `error` + `errorParams` 模板（见 `/diff-review/against` 的 `对比失败：{message}`）。
 
 ## Pitfalls
+
+- **模块级 `T()` 会被冻结成中文（2026-10-07 i18n 落地时踩到）**：`T()` 依赖 `apply()` 里绑定的 locale 服务，`const X = { a: T("…") }` 这类**模块级**求值发生在绑定之前，之后永远是中文。规则：常量里存**中文原文**，到渲染时再 `T()`（`STATUS_LABEL` / `STATUS_TITLE` / `COLOR_ROWS` / `DIFF_VIEWS` 都已按此改）。新增 `T()` 前先确认它是在渲染路径里被调用，而不是在模块初始化时求值。
 
 - **语法高亮「全灰白」的成因与验法（2026-09-20）**：`Section` 里 `useMemo` 算出的 `tokLines` 必须作为**第 4 个参数**传给 `renderHunkLines`；漏传不报错，只是所有文字变灰。**验证必须走真实组件树**：用假 React（`createElement` 要展开函数组件、`useMemo` 立即求值、`useState` 取初值）把 `const HL_TICK` → `const COLOR_ROWS` 之间的源码切片抽出来，注入 stub（`useStore` 传 `{colors, scheme}`、`Icon`、`lineNumOf`、`shortTime`、`SECTION_PREVIEW_ROWS`），渲染 `Section` 后遍历元素树数 `drv-tok-*`——token span 的 className 是 `"drv-tok drv-tok-kw"`，判定要用 `indexOf('drv-tok-') > 0`。**别用「自己拼 HTML」的预览 mock 复核**：那种 mock 绕过了组件树，2026-09-20 正是因此把「参数没传」漏成了「说了已验证」。
 
